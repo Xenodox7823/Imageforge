@@ -627,10 +627,6 @@ export default function App() {
           </div>
 
           <div className="flex items-center gap-2 md:gap-4">
-            <div className="hidden md:flex items-center gap-1.5 text-xs text-gray-500">
-              <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse"></span> WASM Multi-thread Active
-            </div>
-            
             {/* View specific header buttons */}
             {mode !== 'home' && (
               <div className="flex items-center gap-2">
