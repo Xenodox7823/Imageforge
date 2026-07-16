@@ -522,8 +522,8 @@ export default function App() {
       {/* 0. Far Left Vertical Navigation Aside (Sleek Interface Theme) */}
       <aside className="hidden sm:flex w-[72px] bg-gray-900 border-r border-gray-800 flex-col items-center py-5 shrink-0 z-20 justify-between" id="sleek_sidebar">
         <div className="flex flex-col items-center">
-          <div className="w-10 h-10 bg-gradient-to-br from-indigo-400 to-indigo-600 rounded-xl flex items-center justify-center font-bold text-sm text-white shadow-lg shadow-indigo-500/10 cursor-pointer hover:scale-105 active:scale-95 transition" onClick={() => setMode('home')}>
-            IF
+          <div className="w-10 h-10 rounded-xl overflow-hidden cursor-pointer hover:scale-105 active:scale-95 transition" onClick={() => setMode('home')}>
+            <img src="/assets/logo/logo.jpg" alt="Logo" className="w-full h-full object-cover" />
           </div>
           
           <div className="flex flex-col gap-6 mt-10">
@@ -613,32 +613,27 @@ export default function App() {
             </button>
           </div>
         </div>
-        
-        <div className="mt-auto">
-          <div className="w-8 h-8 rounded-full bg-gray-800 border border-gray-700 flex items-center justify-center text-[10px] font-bold text-gray-400 select-none cursor-help hover:text-white transition" title="Developer Profile">
-            JD
-          </div>
-        </div>
       </aside>
 
       {/* Main Content Area (Header + main content view wrapper) */}
       <div className="flex-1 flex flex-col h-screen overflow-hidden min-w-0" id="main_container">
         {/* 1. Global Navigation Header */}
-        <header className="flex items-center justify-between px-6 py-4 h-16 bg-gray-900 border-b border-gray-800 shrink-0 z-10 select-none">
+        <header className="flex items-center justify-between px-3 md:px-6 h-14 md:h-16 bg-gray-900 border-b border-gray-800 shrink-0 z-10 select-none">
           <div className="flex items-center gap-2 cursor-pointer" onClick={() => setMode('home')}>
-            <span className="text-sm font-semibold tracking-tight text-white flex items-center gap-2">
-              ImageForge Pro <span className="bg-[#1e1b4b] text-[#818cf8] text-[9px] px-1.5 py-0.5 rounded font-mono font-medium">v2.4.0</span>
+            <img src="/assets/logo/logo.jpg" alt="Logo" className="w-6 h-6 md:w-8 md:h-8 rounded object-cover" />
+            <span className="text-xs md:text-sm font-semibold tracking-tight text-white">
+              ImageForge Pro
             </span>
           </div>
 
-          <div className="flex items-center gap-4">
+          <div className="flex items-center gap-2 md:gap-4">
             <div className="hidden md:flex items-center gap-1.5 text-xs text-gray-500">
               <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse"></span> WASM Multi-thread Active
             </div>
             
             {/* View specific header buttons */}
             {mode !== 'home' && (
-              <div className="flex items-center gap-3">
+              <div className="flex items-center gap-2">
                 <button
                   onClick={() => {
                     revokeWorkingObjectUrl();
@@ -647,15 +642,15 @@ export default function App() {
                     setMetadata(null);
                     setMode('home');
                   }}
-                  className="text-xs text-gray-400 hover:text-white flex items-center gap-1 bg-gray-900 border border-gray-800 px-3 py-1.5 rounded-lg font-mono uppercase"
+                  className="text-[10px] md:text-xs text-gray-400 hover:text-white flex items-center gap-1 bg-gray-900 border border-gray-800 px-2 md:px-3 py-1 md:py-1.5 rounded-lg font-mono uppercase"
                 >
-                  <ChevronLeft className="w-4 h-4" /> Exit to Home
+                  <ChevronLeft className="w-3.5 h-3.5 md:w-4 md:h-4" /> <span className="hidden sm:inline">Exit to Home</span>
                 </button>
                 <button
                   onClick={exportCurrentImage}
-                  className="bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs px-4 py-2 rounded-lg flex items-center gap-1.5 shadow-lg active:scale-95 transition cursor-pointer"
+                  className="bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-[10px] md:text-xs px-2.5 md:px-4 py-1.5 md:py-2 rounded-lg flex items-center gap-1.5 shadow-lg active:scale-95 transition cursor-pointer"
                 >
-                  <Download className="w-4 h-4" /> {isExporting ? 'Exporting…' : 'Export Image'}
+                  <Download className="w-3.5 h-3.5 md:w-4 md:h-4" /> <span>{isExporting ? 'Exporting…' : 'Export'}</span>
                 </button>
               </div>
             )}
@@ -679,15 +674,9 @@ export default function App() {
                 <div className="flex-1 flex flex-col gap-8 min-w-0">
                   {/* Branding Hero */}
                   <div className="text-left space-y-3">
-                    <div className="inline-flex bg-indigo-950/40 border border-indigo-900/60 px-3.5 py-1 rounded-full text-indigo-400 text-[10px] font-bold font-mono tracking-widest uppercase">
-                      💎 Pure Browser-Side Processing Engine
-                    </div>
                     <h1 className="text-3xl sm:text-5xl font-black text-white tracking-tight leading-none font-sans">
-                      Universal Image Processing <span className="text-indigo-400 block sm:inline">Made Professional.</span>
+                      ImageForge Pro
                     </h1>
-                    <p className="text-xs sm:text-sm text-gray-500 max-w-xl font-sans leading-relaxed">
-                      Crop, compress, remove backgrounds, adjust tones, format passport layouts. Every operation runs instantly in your browser at maximum quality.
-                    </p>
                   </div>
 
                   {/* Upload Zone / Drop area */}
@@ -753,32 +742,7 @@ export default function App() {
                     </div>
                   </div>
 
-                  {/* Grid list of major actions */}
-                  <div className="w-full text-left">
-                    <div className="text-[11px] font-bold text-gray-500 uppercase tracking-widest font-mono mb-4">Core Capabilities Included</div>
-                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                      <div className="bg-gray-900/20 border border-gray-800 p-4 rounded-xl">
-                        <CropIcon className="w-5 h-5 text-indigo-400 mb-2" />
-                        <div className="text-xs font-bold text-gray-300">High Precision Crop</div>
-                        <p className="text-[10px] text-gray-500 font-mono mt-0.5">Rectangle, circle, oval masks</p>
-                      </div>
-                      <div className="bg-gray-900/20 border border-gray-800 p-4 rounded-xl">
-                        <Eraser className="w-5 h-5 text-indigo-400 mb-2" />
-                        <div className="text-xs font-bold text-gray-300">Background Removal</div>
-                        <p className="text-[10px] text-gray-500 font-mono mt-0.5">Auto smart cut-outs & brush</p>
-                      </div>
-                      <div className="bg-gray-900/20 border border-gray-800 p-4 rounded-xl">
-                        <Contact className="w-5 h-5 text-indigo-400 mb-2" />
-                        <div className="text-xs font-bold text-gray-300">Passport / Visas</div>
-                        <p className="text-[10px] text-gray-500 font-mono mt-0.5">Multi-country alignment presets</p>
-                      </div>
-                      <div className="bg-gray-900/20 border border-gray-800 p-4 rounded-xl">
-                        <SlidersHorizontal className="w-5 h-5 text-indigo-400 mb-2" />
-                        <div className="text-xs font-bold text-gray-300">Professional Editor</div>
-                        <p className="text-[10px] text-gray-500 font-mono mt-0.5">Curves, exposure, blurs, grids</p>
-                      </div>
-                    </div>
-                  </div>
+
 
                   {/* Recent Exports list */}
                   {recentExports.length > 0 && (
@@ -853,16 +817,6 @@ export default function App() {
                            Batch Converter
                          </button>
                        </div>
-                     </div>
-                     
-                     <div className="mt-6 pt-5 border-t border-gray-800/60">
-                       <div className="flex justify-between items-center mb-1 text-xs">
-                         <span className="text-gray-500">Storage Saved</span>
-                         <span className="text-indigo-400 font-bold font-mono">1.82 GB</span>
-                       </div>
-                       <p className="text-[10px] text-gray-500 leading-relaxed font-sans">
-                         ImageForge Pro uses perceptual algorithms to optimize images without losing visible quality.
-                       </p>
                      </div>
                    </div>
                  </aside>

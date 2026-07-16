@@ -760,7 +760,7 @@ export default function EditorCanvas({
       >
         {/* Render Grid & Grid Guidelines underneath if checked */}
         <div
-          className="absolute origin-top-left pointer-events-none select-none"
+          className="absolute left-0 top-0 origin-top-left pointer-events-none select-none"
           style={{
             transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
             width: renderWidth,
@@ -810,7 +810,7 @@ export default function EditorCanvas({
         {/* High Precision Output Canvas — GPU-accelerated via will-change and translateZ */}
         <canvas
           ref={canvasRef}
-          className="shadow-2xl max-w-none origin-top-left select-none pointer-events-none"
+          className="absolute left-0 top-0 shadow-2xl max-w-none origin-top-left select-none pointer-events-none"
           style={{
             transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
           }}
