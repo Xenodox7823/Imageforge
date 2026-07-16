@@ -1,0 +1,6 @@
+{
+  "name": "ImageForge Pro",
+  "description": "Production-ready, professional mobile-first PWA for high-precision image compression, cropping, background removal, passport photo generation, and smart batch editing.",
+  "requestFramePermissions": ["camera"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
