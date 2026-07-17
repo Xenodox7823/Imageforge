@@ -6,7 +6,8 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { BatchItem, CompressionSettings } from '../types';
 import { compressImage } from '../utils/compression';
-import { Play, Pause, Trash2, Download, CheckCircle, FileImage, Layers, ArrowUpRight, FolderDown } from 'lucide-react';
+import { Play, Pause, Trash2, Download, CheckCircle, FileImage, Layers, ArrowUpRight, FolderDown, RefreshCw } from 'lucide-react';
+import { convertHeicToJpeg } from '../utils/heicHelper';
 import JSZip from 'jszip';
 
 interface BatchProcessorProps {
@@ -17,6 +18,7 @@ export default function BatchProcessor({ onAddImagesToEditor }: BatchProcessorPr
   const [items, setItems] = useState<BatchItem[]>([]);
   const [isRunning, setIsRunning] = useState<boolean>(false);
   const [currentIdx, setCurrentIdx] = useState<number>(0);
+  const [isHeicConverting, setIsHeicConverting] = useState<boolean>(false);
   
   // Batch Options
   const [format, setFormat] = useState<'png' | 'jpeg' | 'webp' | 'avif'>('webp');
@@ -39,22 +41,43 @@ export default function BatchProcessor({ onAddImagesToEditor }: BatchProcessorPr
     addFileList(Array.from(e.target.files));
   };
 
-  const addFileList = (files: File[]) => {
-    const newItems: BatchItem[] = files.map(file => {
-      const thumbUrl = URL.createObjectURL(file);
-      return {
-        id: Math.random().toString(36).substring(7),
-        file,
-        name: file.name,
-        size: file.size,
-        width: 0,
-        height: 0,
-        thumbnailUrl: thumbUrl,
-        status: 'pending',
-        progress: 0
-      };
-    });
-    setItems(prev => [...prev, ...newItems]);
+  const addFileList = async (files: File[]) => {
+    setIsHeicConverting(true);
+    try {
+      const processedFiles = await Promise.all(
+        files.map(async file => {
+          const isHeic = file.type === 'image/heic' || file.type === 'image/heif' || 
+                         file.name.toLowerCase().endsWith('.heic') || file.name.toLowerCase().endsWith('.heif');
+          if (isHeic) {
+            try {
+              return await convertHeicToJpeg(file);
+            } catch (err) {
+              console.error('HEIC conversion failed for file:', file.name, err);
+              return file; // fallback
+            }
+          }
+          return file;
+        })
+      );
+
+      const newItems: BatchItem[] = processedFiles.map(file => {
+        const thumbUrl = URL.createObjectURL(file);
+        return {
+          id: Math.random().toString(36).substring(7),
+          file,
+          name: file.name,
+          size: file.size,
+          width: 0,
+          height: 0,
+          thumbnailUrl: thumbUrl,
+          status: 'pending',
+          progress: 0
+        };
+      });
+      setItems(prev => [...prev, ...newItems]);
+    } finally {
+      setIsHeicConverting(false);
+    }
   };
 
   const handleDragOver = (e: React.DragEvent<HTMLDivElement>) => {
@@ -206,7 +229,15 @@ export default function BatchProcessor({ onAddImagesToEditor }: BatchProcessorPr
   };
 
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 p-6 h-full bg-gray-950 text-gray-100 font-sans" id="batch_processor_root">
+    <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 p-6 h-full bg-gray-950 text-gray-100 font-sans relative" id="batch_processor_root">
+      {isHeicConverting && (
+        <div className="fixed inset-0 bg-gray-950/80 backdrop-blur-sm flex flex-col items-center justify-center z-[100] gap-3">
+          <RefreshCw className="w-8 h-8 text-indigo-500 animate-spin" />
+          <div className="text-xs font-mono uppercase tracking-widest text-indigo-400 font-semibold animate-pulse">
+            Converting HEIC Images...
+          </div>
+        </div>
+      )}
       {/* Sidebar Batch Controls */}
       <div className="lg:col-span-1 bg-gray-900 border border-gray-800 p-4 rounded-xl flex flex-col gap-5 text-left h-fit">
         <div>
@@ -257,9 +288,33 @@ export default function BatchProcessor({ onAddImagesToEditor }: BatchProcessorPr
 
           {targetSizeKb === null ? (
             <div className="space-y-2">
-              <div className="flex justify-between text-[11px] font-mono text-gray-400">
+              <div className="flex justify-between items-center text-[11px] font-mono text-gray-400">
                 <span>QUALITY</span>
-                <span className="text-indigo-400 font-bold">{quality}%</span>
+                <div className="flex items-center gap-0.5">
+                  <input
+                    type="number"
+                    min="5"
+                    max="100"
+                    value={quality}
+                    onChange={(e) => {
+                      if (e.target.value === '') return;
+                      let val = Math.round(Number(e.target.value));
+                      if (isNaN(val)) return;
+                      if (val < 5) val = 5;
+                      if (val > 100) val = 100;
+                      setQuality(val);
+                    }}
+                    onBlur={(e) => {
+                      let val = Math.round(Number(e.target.value));
+                      if (isNaN(val)) val = 80;
+                      let clamped = Math.max(5, Math.min(100, val));
+                      setQuality(clamped);
+                    }}
+                    onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
+                    className="w-12 text-right bg-gray-950 border border-gray-800/80 focus:border-indigo-500/80 rounded px-1 py-0.5 text-[11px] font-bold text-indigo-400 focus:outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                  />
+                  <span className="text-gray-500 font-bold">%</span>
+                </div>
               </div>
               <input
                 type="range"
@@ -287,9 +342,34 @@ export default function BatchProcessor({ onAddImagesToEditor }: BatchProcessorPr
 
         {/* Common resize factor */}
         <div className="space-y-2 border-t border-gray-800/80 pt-4">
-          <div className="flex justify-between text-[11px] font-mono text-gray-400">
+          <div className="flex justify-between items-center text-[11px] font-mono text-gray-400">
             <span>RESIZE SCALE</span>
-            <span className="text-indigo-400 font-bold">{scale}%</span>
+            <div className="flex items-center gap-0.5">
+              <input
+                type="number"
+                min="10"
+                max="100"
+                step="5"
+                value={scale}
+                onChange={(e) => {
+                  if (e.target.value === '') return;
+                  let val = Math.round(Number(e.target.value));
+                  if (isNaN(val)) return;
+                  if (val < 10) val = 10;
+                  if (val > 100) val = 100;
+                  setScale(val);
+                }}
+                onBlur={(e) => {
+                  let val = Math.round(Number(e.target.value));
+                  if (isNaN(val)) val = 100;
+                  let clamped = Math.max(10, Math.min(100, val));
+                  setScale(clamped);
+                }}
+                onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
+                className="w-12 text-right bg-gray-950 border border-gray-800/80 focus:border-indigo-500/80 rounded px-1 py-0.5 text-[11px] font-bold text-indigo-400 focus:outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+              />
+              <span className="text-gray-500 font-bold">%</span>
+            </div>
           </div>
           <input
             type="range"
@@ -350,7 +430,7 @@ export default function BatchProcessor({ onAddImagesToEditor }: BatchProcessorPr
             ref={fileInputRef}
             onChange={handleFilesUpload}
             multiple
-            accept="image/*"
+            accept="image/*,.heic,.heif"
             className="hidden"
           />
           <FileImage className="w-12 h-12 text-gray-600 group-hover:text-indigo-400 transition" />

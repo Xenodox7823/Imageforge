@@ -21,6 +21,7 @@ import CurvesWidget from './components/CurvesWidget';
 import Histogram from './components/Histogram';
 import { compressImage, CompressionResult } from './utils/compression';
 import { HistogramData } from './utils/imageProcessing';
+import { convertHeicToJpeg } from './utils/heicHelper';
 import {
   SlidersHorizontal,
   Crop as CropIcon,
@@ -69,6 +70,99 @@ const WorkspaceLoader = () => (
   </div>
 );
 
+interface SliderWithInputProps {
+  label: string;
+  min: number;
+  max: number;
+  value: number;
+  onChange: (val: number) => void;
+  onStartChange?: () => void;
+  suffix?: string;
+  step?: number;
+}
+
+const SliderWithInput: React.FC<SliderWithInputProps> = ({
+  label,
+  min,
+  max,
+  value,
+  onChange,
+  onStartChange,
+  suffix = '',
+  step = 1
+}) => {
+  const [inputValue, setInputValue] = useState<string>(String(value));
+
+  // Sync state if value changes from outside (e.g. undo/redo)
+  useEffect(() => {
+    setInputValue(String(value));
+  }, [value]);
+
+  const handleInputChange = (valStr: string) => {
+    setInputValue(valStr);
+    if (valStr === '') return;
+    
+    let num = Number(valStr);
+    if (isNaN(num)) return;
+    
+    // Clamp value
+    let clamped = Math.round(num);
+    if (clamped < min) clamped = min;
+    if (clamped > max) clamped = max;
+    onChange(clamped);
+  };
+
+  const handleBlur = () => {
+    let num = Math.round(Number(inputValue));
+    if (isNaN(num)) num = value;
+    let clamped = Math.max(min, Math.min(max, num));
+    setInputValue(String(clamped));
+    onChange(clamped);
+  };
+
+  return (
+    <div className="space-y-1">
+      <div className="flex justify-between items-center text-[11px] font-mono text-gray-400">
+        <span>{label}</span>
+        <div className="flex items-center gap-0.5">
+          <input
+            type="number"
+            min={min}
+            max={max}
+            step={step}
+            value={inputValue}
+            onFocus={onStartChange}
+            onChange={(e) => handleInputChange(e.target.value)}
+            onBlur={handleBlur}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                (e.target as HTMLInputElement).blur();
+              }
+            }}
+            className="w-12 text-right bg-gray-950 border border-gray-800/80 focus:border-indigo-500/80 rounded px-1 py-0.5 text-[11px] font-bold text-indigo-400 focus:outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+          />
+          {suffix && <span className="text-gray-500 font-bold">{suffix}</span>}
+        </div>
+      </div>
+      <input
+        type="range"
+        min={min}
+        max={max}
+        step={step}
+        value={value}
+        onMouseDown={onStartChange}
+        onTouchStart={onStartChange}
+        onChange={(e) => {
+          const val = Number(e.target.value);
+          setInputValue(String(val));
+          onChange(val);
+        }}
+        className="w-full h-1 bg-gray-950 rounded-lg appearance-none cursor-pointer accent-indigo-500"
+      />
+    </div>
+  );
+};
+
 export default function App() {
   const [mode, setMode] = useState<AppMode>('home');
 
@@ -86,6 +180,8 @@ export default function App() {
     customWidth: 1000,
     customHeight: 1000
   });
+  const [customAspectW, setCustomAspectW] = useState<string>('4');
+  const [customAspectH, setCustomAspectH] = useState<string>('3');
   const [bgRemovalSettings, setBgRemovalSettings] = useState<BackgroundRemovalSettings>(createDefaultBackgroundSettings);
   const [passportPreset, setPassportPreset] = useState<PassportPreset>(PASSPORT_PRESETS[0]);
   const [compressionSettings, setCompressionSettings] = useState<CompressionSettings>(createDefaultCompressionSettings);
@@ -107,6 +203,7 @@ export default function App() {
   // UI state overlays
   const [showExportModal, setShowExportModal] = useState<boolean>(false);
   const [isExporting, setIsExporting] = useState<boolean>(false);
+  const [isHeicConverting, setIsHeicConverting] = useState<boolean>(false);
   const [exportResult, setExportResult] = useState<CompressionResult | null>(null);
   const [recentExports, setRecentExports] = useState<{ name: string; originalSize: number; finalSize: number; format: string; date: string }[]>([]);
 
@@ -259,31 +356,47 @@ export default function App() {
   };
 
   // Handle image loading
-  const handleImageFile = (file: File) => {
-    if (!file.type.startsWith('image/')) {
+  const handleImageFile = async (file: File) => {
+    let targetFile = file;
+    const isHeic = file.type === 'image/heic' || file.type === 'image/heif' || 
+                   file.name.toLowerCase().endsWith('.heic') || file.name.toLowerCase().endsWith('.heif');
+    
+    if (isHeic) {
+      setIsHeicConverting(true);
+      try {
+        targetFile = await convertHeicToJpeg(file);
+      } catch (err) {
+        alert('Could not decode HEIC image. Try converting it to JPEG or PNG first.');
+        setIsHeicConverting(false);
+        return;
+      } finally {
+        setIsHeicConverting(false);
+      }
+    } else if (!file.type.startsWith('image/') && file.type !== '') {
       alert('Please choose a supported image file.');
       return;
     }
-    if (file.size > 100 * 1024 * 1024) {
+
+    if (targetFile.size > 100 * 1024 * 1024) {
       alert('Images larger than 100 MB are not supported in this browser workspace.');
       return;
     }
     revokeWorkingObjectUrl();
-    const url = URL.createObjectURL(file);
+    const url = URL.createObjectURL(targetFile);
     objectUrlRef.current = url;
     setImageSrc(url);
-    setImageName(file.name);
+    setImageName(targetFile.name);
     
     // Parse metadata
     const img = new Image();
     img.onload = () => {
       const meta: ImageMetadata = {
-        name: file.name,
-        size: file.size,
-        type: file.type,
+        name: targetFile.name,
+        size: targetFile.size,
+        type: targetFile.type,
         width: img.width,
         height: img.height,
-        lastModified: file.lastModified
+        lastModified: targetFile.lastModified
       };
       setMetadata(meta);
     };
@@ -519,6 +632,14 @@ export default function App() {
 
   return (
     <div className="flex h-screen bg-gray-950 text-gray-100 font-sans select-none overflow-hidden" id="app_frame">
+      {isHeicConverting && (
+        <div className="fixed inset-0 bg-gray-950/80 backdrop-blur-sm flex flex-col items-center justify-center z-[100] gap-3">
+          <RefreshCw className="w-8 h-8 text-indigo-500 animate-spin" />
+          <div className="text-xs font-mono uppercase tracking-widest text-indigo-400 font-semibold animate-pulse">
+            Converting HEIC Image...
+          </div>
+        </div>
+      )}
       {/* 0. Far Left Vertical Navigation Aside (Sleek Interface Theme) */}
       <aside className="hidden sm:flex w-[72px] bg-gray-900 border-r border-gray-800 flex-col items-center py-5 shrink-0 z-20 justify-between" id="sleek_sidebar">
         <div className="flex flex-col items-center">
@@ -692,7 +813,7 @@ export default function App() {
                         type="file"
                         ref={fileInputRef}
                         onChange={handleFileUpload}
-                        accept="image/*"
+                        accept="image/*,.heic,.heif"
                         className="hidden"
                       />
                       <div className="bg-gray-900 border border-gray-800 p-4 rounded-xl text-gray-400 group-hover:text-indigo-400 transition-colors shadow-lg">
@@ -920,168 +1041,109 @@ export default function App() {
                     <div className="text-[11px] font-bold text-gray-400 uppercase tracking-widest font-mono">Toning / Lighting</div>
                     
                     {/* Exposure */}
-                    <div className="space-y-1">
-                      <div className="flex justify-between text-[11px] font-mono text-gray-400">
-                        <span>EXPOSURE</span>
-                        <span className="text-indigo-400">{adjustments.exposure}</span>
-                      </div>
-                      <input
-                        type="range"
-                        min="-100"
-                        max="100"
-                        value={adjustments.exposure}
-                        onMouseDown={recordHistory}
-                        onTouchStart={recordHistory}
-                        onChange={(e) => updateAdjustments({ ...adjustments, exposure: Number(e.target.value) })}
-                        className="w-full h-1 bg-gray-950 rounded-lg appearance-none cursor-pointer accent-indigo-500"
-                      />
-                    </div>
+                    <SliderWithInput
+                      label="EXPOSURE"
+                      min={-100}
+                      max={100}
+                      value={adjustments.exposure}
+                      onStartChange={recordHistory}
+                      onChange={(val) => updateAdjustments({ ...adjustments, exposure: val })}
+                    />
 
                     {/* Brightness */}
-                    <div className="space-y-1">
-                      <div className="flex justify-between text-[11px] font-mono text-gray-400">
-                        <span>BRIGHTNESS</span>
-                        <span className="text-indigo-400">{adjustments.brightness}</span>
-                      </div>
-                      <input
-                        type="range"
-                        min="-100"
-                        max="100"
-                        value={adjustments.brightness}
-                        onMouseDown={recordHistory}
-                        onTouchStart={recordHistory}
-                        onChange={(e) => updateAdjustments({ ...adjustments, brightness: Number(e.target.value) })}
-                        className="w-full h-1 bg-gray-950 rounded-lg appearance-none cursor-pointer accent-indigo-500"
-                      />
-                    </div>
+                    <SliderWithInput
+                      label="BRIGHTNESS"
+                      min={-100}
+                      max={100}
+                      value={adjustments.brightness}
+                      onStartChange={recordHistory}
+                      onChange={(val) => updateAdjustments({ ...adjustments, brightness: val })}
+                    />
 
                     {/* Contrast */}
-                    <div className="space-y-1">
-                      <div className="flex justify-between text-[11px] font-mono text-gray-400">
-                        <span>CONTRAST</span>
-                        <span className="text-indigo-400">{adjustments.contrast}</span>
-                      </div>
-                      <input
-                        type="range"
-                        min="-100"
-                        max="100"
-                        value={adjustments.contrast}
-                        onMouseDown={recordHistory}
-                        onTouchStart={recordHistory}
-                        onChange={(e) => updateAdjustments({ ...adjustments, contrast: Number(e.target.value) })}
-                        className="w-full h-1 bg-gray-950 rounded-lg appearance-none cursor-pointer accent-indigo-500"
-                      />
-                    </div>
+                    <SliderWithInput
+                      label="CONTRAST"
+                      min={-100}
+                      max={100}
+                      value={adjustments.contrast}
+                      onStartChange={recordHistory}
+                      onChange={(val) => updateAdjustments({ ...adjustments, contrast: val })}
+                    />
 
                     {/* Highlights */}
-                    <div className="space-y-1">
-                      <div className="flex justify-between text-[11px] font-mono text-gray-400">
-                        <span>HIGHLIGHTS</span>
-                        <span className="text-indigo-400">{adjustments.highlights}</span>
-                      </div>
-                      <input
-                        type="range"
-                        min="-100"
-                        max="100"
-                        value={adjustments.highlights}
-                        onMouseDown={recordHistory}
-                        onTouchStart={recordHistory}
-                        onChange={(e) => updateAdjustments({ ...adjustments, highlights: Number(e.target.value) })}
-                        className="w-full h-1 bg-gray-950 rounded-lg appearance-none cursor-pointer accent-indigo-500"
-                      />
-                    </div>
+                    <SliderWithInput
+                      label="HIGHLIGHTS"
+                      min={-100}
+                      max={100}
+                      value={adjustments.highlights}
+                      onStartChange={recordHistory}
+                      onChange={(val) => updateAdjustments({ ...adjustments, highlights: val })}
+                    />
 
                     {/* Shadows */}
-                    <div className="space-y-1">
-                      <div className="flex justify-between text-[11px] font-mono text-gray-400">
-                        <span>SHADOWS</span>
-                        <span className="text-indigo-400">{adjustments.shadows}</span>
-                      </div>
-                      <input
-                        type="range"
-                        min="-100"
-                        max="100"
-                        value={adjustments.shadows}
-                        onMouseDown={recordHistory}
-                        onTouchStart={recordHistory}
-                        onChange={(e) => updateAdjustments({ ...adjustments, shadows: Number(e.target.value) })}
-                        className="w-full h-1 bg-gray-950 rounded-lg appearance-none cursor-pointer accent-indigo-500"
-                      />
-                    </div>
+                    <SliderWithInput
+                      label="SHADOWS"
+                      min={-100}
+                      max={100}
+                      value={adjustments.shadows}
+                      onStartChange={recordHistory}
+                      onChange={(val) => updateAdjustments({ ...adjustments, shadows: val })}
+                    />
                   </div>
 
                   <div className="space-y-4 border-t border-gray-850 pt-4">
                     <div className="text-[11px] font-bold text-gray-400 uppercase tracking-widest font-mono">Color Space</div>
 
                     {/* Temperature */}
-                    <div className="space-y-1">
-                      <div className="flex justify-between text-[11px] font-mono text-gray-400">
-                        <span>TEMP (WARMTH)</span>
-                        <span className="text-indigo-400">{adjustments.temperature}</span>
-                      </div>
-                      <input
-                        type="range"
-                        min="-100"
-                        max="100"
-                        value={adjustments.temperature}
-                        onMouseDown={recordHistory}
-                        onTouchStart={recordHistory}
-                        onChange={(e) => updateAdjustments({ ...adjustments, temperature: Number(e.target.value) })}
-                        className="w-full h-1 bg-gray-950 rounded-lg appearance-none cursor-pointer accent-indigo-500"
-                      />
-                    </div>
+                    <SliderWithInput
+                      label="TEMP (WARMTH)"
+                      min={-100}
+                      max={100}
+                      value={adjustments.temperature}
+                      onStartChange={recordHistory}
+                      onChange={(val) => updateAdjustments({ ...adjustments, temperature: val })}
+                    />
 
                     {/* Saturation */}
-                    <div className="space-y-1">
-                      <div className="flex justify-between text-[11px] font-mono text-gray-400">
-                        <span>SATURATION</span>
-                        <span className="text-indigo-400">{adjustments.saturation}</span>
-                      </div>
-                      <input
-                        type="range"
-                        min="-100"
-                        max="100"
-                        value={adjustments.saturation}
-                        onMouseDown={recordHistory}
-                        onTouchStart={recordHistory}
-                        onChange={(e) => updateAdjustments({ ...adjustments, saturation: Number(e.target.value) })}
-                        className="w-full h-1 bg-gray-950 rounded-lg appearance-none cursor-pointer accent-indigo-500"
-                      />
-                    </div>
+                    <SliderWithInput
+                      label="SATURATION"
+                      min={-100}
+                      max={100}
+                      value={adjustments.saturation}
+                      onStartChange={recordHistory}
+                      onChange={(val) => updateAdjustments({ ...adjustments, saturation: val })}
+                    />
 
                     {/* Vibrance */}
-                    <div className="space-y-1">
-                      <div className="flex justify-between text-[11px] font-mono text-gray-400">
-                        <span>VIBRANCE</span>
-                        <span className="text-indigo-400">{adjustments.vibrance}</span>
-                      </div>
-                      <input
-                        type="range"
-                        min="-100"
-                        max="100"
-                        value={adjustments.vibrance}
-                        onMouseDown={recordHistory}
-                        onTouchStart={recordHistory}
-                        onChange={(e) => updateAdjustments({ ...adjustments, vibrance: Number(e.target.value) })}
-                        className="w-full h-1 bg-gray-950 rounded-lg appearance-none cursor-pointer accent-indigo-500"
-                      />
-                    </div>
+                    <SliderWithInput
+                      label="VIBRANCE"
+                      min={-100}
+                      max={100}
+                      value={adjustments.vibrance}
+                      onStartChange={recordHistory}
+                      onChange={(val) => updateAdjustments({ ...adjustments, vibrance: val })}
+                    />
 
-                    <div className="space-y-1">
-                      <div className="flex justify-between text-[11px] font-mono text-gray-400">
-                        <span>TINT</span>
-                        <span className="text-indigo-400">{adjustments.tint}</span>
-                      </div>
-                      <input type="range" min="-100" max="100" value={adjustments.tint} onMouseDown={recordHistory} onTouchStart={recordHistory} onChange={(e) => updateAdjustments({ ...adjustments, tint: Number(e.target.value) })} className="w-full h-1 bg-gray-950 rounded-lg appearance-none cursor-pointer accent-indigo-500" />
-                    </div>
+                    {/* Tint */}
+                    <SliderWithInput
+                      label="TINT"
+                      min={-100}
+                      max={100}
+                      value={adjustments.tint}
+                      onStartChange={recordHistory}
+                      onChange={(val) => updateAdjustments({ ...adjustments, tint: val })}
+                    />
 
-                    <div className="space-y-1">
-                      <div className="flex justify-between text-[11px] font-mono text-gray-400">
-                        <span>HUE</span>
-                        <span className="text-indigo-400">{adjustments.hue}°</span>
-                      </div>
-                      <input type="range" min="-180" max="180" value={adjustments.hue} onMouseDown={recordHistory} onTouchStart={recordHistory} onChange={(e) => updateAdjustments({ ...adjustments, hue: Number(e.target.value) })} className="w-full h-1 bg-gray-950 rounded-lg appearance-none cursor-pointer accent-indigo-500" />
-                    </div>
+                    {/* Hue */}
+                    <SliderWithInput
+                      label="HUE"
+                      min={-180}
+                      max={180}
+                      value={adjustments.hue}
+                      onStartChange={recordHistory}
+                      onChange={(val) => updateAdjustments({ ...adjustments, hue: val })}
+                      suffix="°"
+                    />
                   </div>
 
                   <div className="space-y-4 border-t border-gray-850 pt-4">
@@ -1093,10 +1155,15 @@ export default function App() {
                       ['BLUR', 'blur', 0, 100],
                       ['VIGNETTE', 'vignette', 0, 100]
                     ] as const).map(([label, key, min, max]) => (
-                      <div className="space-y-1" key={key}>
-                        <div className="flex justify-between text-[11px] font-mono text-gray-400"><span>{label}</span><span className="text-indigo-400">{adjustments[key]}</span></div>
-                        <input type="range" min={min} max={max} value={adjustments[key]} onMouseDown={recordHistory} onTouchStart={recordHistory} onChange={(e) => updateAdjustments({ ...adjustments, [key]: Number(e.target.value) })} className="w-full h-1 bg-gray-950 rounded-lg appearance-none cursor-pointer accent-indigo-500" />
-                      </div>
+                      <SliderWithInput
+                        key={key}
+                        label={label}
+                        min={min}
+                        max={max}
+                        value={adjustments[key]}
+                        onStartChange={recordHistory}
+                        onChange={(val) => updateAdjustments({ ...adjustments, [key]: val })}
+                      />
                     ))}
                   </div>
 
@@ -1254,23 +1321,84 @@ export default function App() {
                     { name: 'Classic Portrait (3:2)', ratio: 1.5 },
                     { name: 'Golden Standard (4:3)', ratio: 1.333 },
                     { name: 'HD Cinematic (16:9)', ratio: 1.777 },
-                    { name: 'TikTok vertical (9:16)', ratio: 0.562 }
-                  ].map((preset, idx) => (
-                    <button
-                      key={idx}
-                      onClick={() => setCropSettings({ ...cropSettings, aspectRatio: preset.ratio, aspectName: preset.name })}
-                      className={`w-full py-2 px-3 text-xs font-semibold rounded border transition text-left flex justify-between items-center ${
-                        cropSettings.aspectRatio === preset.ratio
-                          ? 'bg-indigo-600 border-indigo-500 text-white'
-                          : 'bg-gray-950 border-gray-800 text-gray-400 hover:text-white'
-                      }`}
-                    >
-                      <span>{preset.name}</span>
-                      <span className="font-mono text-[10px] opacity-60">
-                        {preset.ratio ? preset.ratio.toFixed(2) : 'Free'}
-                      </span>
-                    </button>
-                  ))}
+                    { name: 'TikTok vertical (9:16)', ratio: 0.562 },
+                    { name: 'Custom Ratio', ratio: 'custom' }
+                  ].map((preset, idx) => {
+                    const isSelected = preset.ratio === 'custom'
+                      ? cropSettings.aspectName === 'Custom Ratio'
+                      : cropSettings.aspectRatio === preset.ratio && cropSettings.aspectName !== 'Custom Ratio';
+
+                    return (
+                      <div key={idx} className="space-y-2">
+                        <button
+                          onClick={() => {
+                            if (preset.ratio === 'custom') {
+                              const w = Number(customAspectW);
+                              const h = Number(customAspectH);
+                              const ratio = (w > 0 && h > 0) ? w / h : 1.0;
+                              setCropSettings({ ...cropSettings, aspectRatio: ratio, aspectName: 'Custom Ratio' });
+                            } else {
+                              setCropSettings({ ...cropSettings, aspectRatio: preset.ratio, aspectName: preset.name });
+                            }
+                          }}
+                          className={`w-full py-2 px-3 text-xs font-semibold rounded border transition text-left flex justify-between items-center cursor-pointer ${
+                            isSelected
+                              ? 'bg-indigo-600 border-indigo-500 text-white'
+                              : 'bg-gray-950 border-gray-800 text-gray-400 hover:text-white'
+                          }`}
+                        >
+                          <span>{preset.name}</span>
+                          <span className="font-mono text-[10px] opacity-60">
+                            {preset.ratio === 'custom' 
+                              ? `${customAspectW}:${customAspectH}` 
+                              : preset.ratio ? preset.ratio.toFixed(2) : 'Free'}
+                          </span>
+                        </button>
+
+                        {preset.ratio === 'custom' && isSelected && (
+                          <div className="flex items-center justify-between gap-2 p-2 bg-gray-950/60 border border-gray-800 rounded">
+                            <div className="flex items-center gap-1">
+                              <span className="text-[10px] text-gray-500 font-mono">W:</span>
+                              <input
+                                type="number"
+                                min="1"
+                                value={customAspectW}
+                                onChange={(e) => {
+                                  const val = e.target.value;
+                                  setCustomAspectW(val);
+                                  const w = Number(val);
+                                  const h = Number(customAspectH);
+                                  if (w > 0 && h > 0) {
+                                    setCropSettings(prev => ({ ...prev, aspectRatio: w / h, aspectName: 'Custom Ratio' }));
+                                  }
+                                }}
+                                className="w-14 bg-gray-900 border border-gray-800 rounded px-1.5 py-0.5 text-xs text-white focus:border-indigo-500 text-center font-mono focus:outline-none"
+                              />
+                            </div>
+                            <span className="text-gray-600 font-bold">:</span>
+                            <div className="flex items-center gap-1">
+                              <span className="text-[10px] text-gray-500 font-mono">H:</span>
+                              <input
+                                type="number"
+                                min="1"
+                                value={customAspectH}
+                                onChange={(e) => {
+                                  const val = e.target.value;
+                                  setCustomAspectH(val);
+                                  const w = Number(customAspectW);
+                                  const h = Number(val);
+                                  if (w > 0 && h > 0) {
+                                    setCropSettings(prev => ({ ...prev, aspectRatio: w / h, aspectName: 'Custom Ratio' }));
+                                  }
+                                }}
+                                className="w-14 bg-gray-900 border border-gray-800 rounded px-1.5 py-0.5 text-xs text-white focus:border-indigo-500 text-center font-mono focus:outline-none"
+                              />
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
 
                 {/* Shape selection masks */}
@@ -1352,36 +1480,24 @@ export default function App() {
                   {bgRemovalSettings.brushMode !== 'none' && (
                     <>
                       {/* Brush size slider */}
-                      <div className="space-y-1">
-                        <div className="flex justify-between text-[11px] font-mono text-gray-400">
-                          <span>BRUSH DIAMETER</span>
-                          <span className="text-indigo-400 font-bold">{bgRemovalSettings.brushSize}px</span>
-                        </div>
-                        <input
-                          type="range"
-                          min="5"
-                          max="100"
-                          value={bgRemovalSettings.brushSize}
-                          onChange={(e) => setBgRemovalSettings({ ...bgRemovalSettings, brushSize: Number(e.target.value) })}
-                          className="w-full h-1 bg-gray-950 rounded-lg appearance-none cursor-pointer accent-indigo-500"
-                        />
-                      </div>
+                      <SliderWithInput
+                        label="BRUSH DIAMETER"
+                        min={5}
+                        max={100}
+                        value={bgRemovalSettings.brushSize}
+                        onChange={(val) => setBgRemovalSettings({ ...bgRemovalSettings, brushSize: val })}
+                        suffix="px"
+                      />
 
                       {/* Brush hardness slider */}
-                      <div className="space-y-1">
-                        <div className="flex justify-between text-[11px] font-mono text-gray-400">
-                          <span>HARDNESS</span>
-                          <span className="text-indigo-400 font-bold">{bgRemovalSettings.brushHardness}%</span>
-                        </div>
-                        <input
-                          type="range"
-                          min="0"
-                          max="100"
-                          value={bgRemovalSettings.brushHardness}
-                          onChange={(e) => setBgRemovalSettings({ ...bgRemovalSettings, brushHardness: Number(e.target.value) })}
-                          className="w-full h-1 bg-gray-950 rounded-lg appearance-none cursor-pointer accent-indigo-500"
-                        />
-                      </div>
+                      <SliderWithInput
+                        label="HARDNESS"
+                        min={0}
+                        max={100}
+                        value={bgRemovalSettings.brushHardness}
+                        onChange={(val) => setBgRemovalSettings({ ...bgRemovalSettings, brushHardness: val })}
+                        suffix="%"
+                      />
                     </>
                   )}
                 </div>
@@ -1391,36 +1507,24 @@ export default function App() {
                   <div className="text-[11px] font-bold text-gray-400 uppercase tracking-widest font-mono">Edge Processing</div>
                   
                   {/* Tolerance slider */}
-                  <div className="space-y-1">
-                    <div className="flex justify-between text-[11px] font-mono text-gray-400">
-                      <span>CHROMA TOLERANCE</span>
-                      <span className="text-indigo-400 font-bold">{bgRemovalSettings.tolerance}%</span>
-                    </div>
-                    <input
-                      type="range"
-                      min="1"
-                      max="100"
-                      value={bgRemovalSettings.tolerance}
-                      onChange={(e) => setBgRemovalSettings({ ...bgRemovalSettings, tolerance: Number(e.target.value) })}
-                      className="w-full h-1 bg-gray-950 rounded-lg appearance-none cursor-pointer accent-indigo-500"
-                    />
-                  </div>
+                  <SliderWithInput
+                    label="CHROMA TOLERANCE"
+                    min={1}
+                    max={100}
+                    value={bgRemovalSettings.tolerance}
+                    onChange={(val) => setBgRemovalSettings({ ...bgRemovalSettings, tolerance: val })}
+                    suffix="%"
+                  />
 
                   {/* Mask Feather slider */}
-                  <div className="space-y-1">
-                    <div className="flex justify-between text-[11px] font-mono text-gray-400">
-                      <span>MASK FEATHER</span>
-                      <span className="text-indigo-400 font-bold">{bgRemovalSettings.feather}px</span>
-                    </div>
-                    <input
-                      type="range"
-                      min="0"
-                      max="20"
-                      value={bgRemovalSettings.feather}
-                      onChange={(e) => setBgRemovalSettings({ ...bgRemovalSettings, feather: Number(e.target.value) })}
-                      className="w-full h-1 bg-gray-950 rounded-lg appearance-none cursor-pointer accent-indigo-500"
-                    />
-                  </div>
+                  <SliderWithInput
+                    label="MASK FEATHER"
+                    min={0}
+                    max={20}
+                    value={bgRemovalSettings.feather}
+                    onChange={(val) => setBgRemovalSettings({ ...bgRemovalSettings, feather: val })}
+                    suffix="px"
+                  />
                 </div>
 
                 {/* Replacement Background layout options */}
@@ -1462,14 +1566,25 @@ export default function App() {
                     <span className="text-indigo-400 shrink-0">Browse</span>
                     <input
                       type="file"
-                      accept="image/*"
+                      accept="image/*,.heic,.heif"
                       className="hidden"
-                      onChange={(e) => {
+                      onChange={async (e) => {
                         const file = e.target.files?.[0];
                         if (!file) return;
+                        let targetFile = file;
+                        const isHeic = file.type === 'image/heic' || file.type === 'image/heif' || 
+                                       file.name.toLowerCase().endsWith('.heic') || file.name.toLowerCase().endsWith('.heif');
+                        if (isHeic) {
+                          try {
+                            targetFile = await convertHeicToJpeg(file);
+                          } catch (err) {
+                            alert('Could not convert HEIC background image.');
+                            return;
+                          }
+                        }
                         const reader = new FileReader();
                         reader.onload = () => setBgRemovalSettings((current) => ({ ...current, type: 'image', bgImageUrl: String(reader.result) }));
-                        reader.readAsDataURL(file);
+                        reader.readAsDataURL(targetFile);
                         e.target.value = '';
                       }}
                     />
@@ -1619,20 +1734,14 @@ export default function App() {
                     </div>
 
                     {compressionSettings.targetSizeKb === null ? (
-                      <div className="space-y-1">
-                        <div className="flex justify-between text-[11px] font-mono text-gray-400">
-                          <span>Slider Quality:</span>
-                          <span className="text-indigo-400 font-bold">{compressionSettings.quality}%</span>
-                        </div>
-                        <input
-                          type="range"
-                          min="5"
-                          max="100"
-                          value={compressionSettings.quality}
-                          onChange={(e) => setCompressionSettings({ ...compressionSettings, quality: Number(e.target.value) })}
-                          className="w-full h-1 bg-gray-950 rounded-lg appearance-none cursor-pointer accent-indigo-500"
-                        />
-                      </div>
+                      <SliderWithInput
+                        label="Slider Quality"
+                        min={5}
+                        max={100}
+                        value={compressionSettings.quality}
+                        onChange={(val) => setCompressionSettings({ ...compressionSettings, quality: val })}
+                        suffix="%"
+                      />
                     ) : (
                       <div className="space-y-1">
                         <input
@@ -1826,20 +1935,14 @@ export default function App() {
                     </div>
 
                     {compressionSettings.targetSizeKb === null ? (
-                      <div className="space-y-1">
-                        <div className="flex justify-between text-[11px] font-mono text-gray-400">
-                          <span>Slider Quality:</span>
-                          <span className="text-indigo-400 font-bold">{compressionSettings.quality}%</span>
-                        </div>
-                        <input
-                          type="range"
-                          min="5"
-                          max="100"
-                          value={compressionSettings.quality}
-                          onChange={(e) => setCompressionSettings({ ...compressionSettings, quality: Number(e.target.value) })}
-                          className="w-full h-1 bg-gray-950 rounded-lg appearance-none cursor-pointer accent-indigo-500"
-                        />
-                      </div>
+                      <SliderWithInput
+                        label="Slider Quality"
+                        min={5}
+                        max={100}
+                        value={compressionSettings.quality}
+                        onChange={(val) => setCompressionSettings({ ...compressionSettings, quality: val })}
+                        suffix="%"
+                      />
                     ) : (
                       <div className="space-y-1">
                         <input

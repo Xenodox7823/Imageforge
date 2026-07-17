@@ -35,7 +35,7 @@ export default function CropCanvas({ imageSrc, settings, onCropComplete, onCance
     h: 0.8
   });
 
-  // Mouse interaction states
+  // Mouse/Touch interaction states
   const [dragAction, setDragAction] = useState<'move' | 'nw' | 'ne' | 'se' | 'sw' | 'n' | 'e' | 's' | 'w' | null>(null);
   const [dragStartMouse, setDragStartMouse] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
   const [dragStartBox, setDragStartBox] = useState<{ x: number; y: number; w: number; h: number }>({ x: 0, y: 0, w: 0, h: 0 });
@@ -44,9 +44,15 @@ export default function CropCanvas({ imageSrc, settings, onCropComplete, onCance
   const [isPanning, setIsPanning] = useState<boolean>(false);
   const [panStart, setPanStart] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
   const [touchStartDist, setTouchStartDist] = useState<number | null>(null);
+  const [isMoveMode, setIsMoveMode] = useState<boolean>(false);
 
   // Background panning and zoom handlers
   const handleBgMouseDown = (e: MouseEvent<HTMLDivElement>) => {
+    if (isMoveMode) {
+      setIsPanning(true);
+      setPanStart({ x: e.clientX - pan.x, y: e.clientY - pan.y });
+      return;
+    }
     // If clicking the workspace background itself or the inner arena
     if (e.target === e.currentTarget || (e.target as HTMLElement).id === "workspace_arena") {
       setIsPanning(true);
@@ -104,9 +110,27 @@ export default function CropCanvas({ imageSrc, settings, onCropComplete, onCance
 
   // Touch handlers for mobile pinching & panning
   const handleTouchStart = (e: React.TouchEvent<HTMLDivElement>) => {
+    if (isMoveMode) {
+      if (e.touches.length === 1) {
+        setIsPanning(true);
+        setPanStart({ x: e.touches[0].clientX - pan.x, y: e.touches[0].clientY - pan.y });
+      } else if (e.touches.length === 2) {
+        setIsPanning(false);
+        const dist = Math.hypot(
+          e.touches[0].clientX - e.touches[1].clientX,
+          e.touches[0].clientY - e.touches[1].clientY
+        );
+        setTouchStartDist(dist);
+      }
+      return;
+    }
+
     if (e.touches.length === 1) {
-      setIsPanning(true);
-      setPanStart({ x: e.touches[0].clientX - pan.x, y: e.touches[0].clientY - pan.y });
+      // Panning if touched background
+      if (e.target === e.currentTarget || (e.target as HTMLElement).id === "workspace_arena") {
+        setIsPanning(true);
+        setPanStart({ x: e.touches[0].clientX - pan.x, y: e.touches[0].clientY - pan.y });
+      }
     } else if (e.touches.length === 2) {
       setIsPanning(false);
       const dist = Math.hypot(
@@ -118,7 +142,30 @@ export default function CropCanvas({ imageSrc, settings, onCropComplete, onCance
   };
 
   const handleTouchMove = (e: React.TouchEvent<HTMLDivElement>) => {
-    if (isPanning && e.touches.length === 1) {
+    if (isMoveMode) {
+      if (isPanning && e.touches.length === 1) {
+        setPan({
+          x: e.touches[0].clientX - panStart.x,
+          y: e.touches[0].clientY - panStart.y
+        });
+      } else if (e.touches.length === 2 && touchStartDist) {
+        const dist = Math.hypot(
+          e.touches[0].clientX - e.touches[1].clientX,
+          e.touches[0].clientY - e.touches[1].clientY
+        );
+        const scaleFactor = dist / touchStartDist;
+        setTouchStartDist(dist);
+        setZoom(prev => Math.max(0.1, Math.min(10, prev * scaleFactor)));
+      }
+      return;
+    }
+
+    if (dragAction) {
+      const touch = e.touches[0];
+      const dx = (touch.clientX - dragStartMouse.x) / (image!.width * zoom);
+      const dy = (touch.clientY - dragStartMouse.y) / (image!.height * zoom);
+      updateCropBoxWithDelta(dx, dy);
+    } else if (isPanning && e.touches.length === 1) {
       setPan({
         x: e.touches[0].clientX - panStart.x,
         y: e.touches[0].clientY - panStart.y
@@ -137,13 +184,25 @@ export default function CropCanvas({ imageSrc, settings, onCropComplete, onCance
   const handleTouchEnd = () => {
     setIsPanning(false);
     setTouchStartDist(null);
+    setDragAction(null);
+  };
+
+  const handleTouchStartHandle = (e: React.TouchEvent<HTMLDivElement>, action: typeof dragAction) => {
+    if (isMoveMode || !image) return;
+    e.stopPropagation();
+    const touch = e.touches[0];
+    setDragAction(action);
+    setDragStartMouse({ x: touch.clientX, y: touch.clientY });
+    setDragStartBox({ ...cropBox });
   };
 
   // Load image & handle responsive viewport scaling
   useEffect(() => {
     if (!imageSrc) return;
     const img = new Image();
-    img.crossOrigin = 'anonymous';
+    if (!imageSrc.startsWith('blob:') && !imageSrc.startsWith('data:')) {
+      img.crossOrigin = 'anonymous';
+    }
     img.onload = () => {
       setImage(img);
       // Initialize a standard proportional crop window
@@ -346,24 +405,10 @@ export default function CropCanvas({ imageSrc, settings, onCropComplete, onCance
   }, [image, cropBox, zoom, settings.shape]);
 
   // Handle Drag / Resize mechanics
-  const handleMouseDown = (e: MouseEvent<HTMLDivElement>, action: typeof dragAction) => {
-    e.stopPropagation();
-    if (!image) return;
-
-    setDragAction(action);
-    setDragStartMouse({ x: e.clientX, y: e.clientY });
-    setDragStartBox({ ...cropBox });
-  };
-
-  const handleMouseMove = (e: MouseEvent<HTMLDivElement>) => {
+  const updateCropBoxWithDelta = (dx: number, dy: number) => {
     if (!dragAction || !image) return;
 
-    const dx = (e.clientX - dragStartMouse.x) / (image.width * zoom);
-    const dy = (e.clientY - dragStartMouse.y) / (image.height * zoom);
-
     let nextBox = { ...dragStartBox };
-
-    // Aspect ratio locked scaling constraint
     const ratio = settings.aspectRatio;
     const imgAspect = image.width / image.height;
 
@@ -444,12 +489,24 @@ export default function CropCanvas({ imageSrc, settings, onCropComplete, onCance
         }
         break;
 
-      // Side handles (only available for free aspect)
+      // Side handles
       case 'e':
-        if (!ratio) nextBox.w = clampNorm(dragStartBox.w + dx);
+        if (ratio) {
+          const maxW = Math.min(1 - dragStartBox.x, ((1 - dragStartBox.y) * ratio) / imgAspect);
+          nextBox.w = Math.max(0.05, Math.min(maxW, dragStartBox.w + dx));
+          nextBox.h = (nextBox.w * imgAspect) / ratio;
+        } else {
+          nextBox.w = clampNorm(dragStartBox.w + dx);
+        }
         break;
       case 'w':
-        if (!ratio) {
+        if (ratio) {
+          const right = dragStartBox.x + dragStartBox.w;
+          const maxW = Math.min(right, ((1 - dragStartBox.y) * ratio) / imgAspect);
+          nextBox.w = Math.max(0.05, Math.min(maxW, dragStartBox.w - dx));
+          nextBox.x = right - nextBox.w;
+          nextBox.h = (nextBox.w * imgAspect) / ratio;
+        } else {
           const right = dragStartBox.x + dragStartBox.w;
           nextBox.w = clampNorm(dragStartBox.w - dx);
           if (nextBox.w < 0.05) nextBox.w = 0.05;
@@ -457,10 +514,22 @@ export default function CropCanvas({ imageSrc, settings, onCropComplete, onCance
         }
         break;
       case 's':
-        if (!ratio) nextBox.h = clampNorm(dragStartBox.h + dy);
+        if (ratio) {
+          const maxH = Math.min(1 - dragStartBox.y, ((1 - dragStartBox.x) * imgAspect) / ratio);
+          nextBox.h = Math.max(0.05, Math.min(maxH, dragStartBox.h + dy));
+          nextBox.w = (nextBox.h * ratio) / imgAspect;
+        } else {
+          nextBox.h = clampNorm(dragStartBox.h + dy);
+        }
         break;
       case 'n':
-        if (!ratio) {
+        if (ratio) {
+          const bottom = dragStartBox.y + dragStartBox.h;
+          const maxH = Math.min(bottom, ((1 - dragStartBox.x) * imgAspect) / ratio);
+          nextBox.h = Math.max(0.05, Math.min(maxH, dragStartBox.h - dy));
+          nextBox.y = bottom - nextBox.h;
+          nextBox.w = (nextBox.h * ratio) / imgAspect;
+        } else {
           const bottom = dragStartBox.y + dragStartBox.h;
           nextBox.h = clampNorm(dragStartBox.h - dy);
           if (nextBox.h < 0.05) nextBox.h = 0.05;
@@ -476,6 +545,24 @@ export default function CropCanvas({ imageSrc, settings, onCropComplete, onCance
     if (nextBox.y + nextBox.h > 1) nextBox.h = 1 - nextBox.y;
 
     setCropBox(nextBox);
+  };
+
+  const handleMouseDown = (e: MouseEvent<HTMLDivElement>, action: typeof dragAction) => {
+    if (isMoveMode) return;
+    e.stopPropagation();
+    if (!image) return;
+
+    setDragAction(action);
+    setDragStartMouse({ x: e.clientX, y: e.clientY });
+    setDragStartBox({ ...cropBox });
+  };
+
+  const handleMouseMove = (e: MouseEvent<HTMLDivElement>) => {
+    if (!dragAction || !image) return;
+
+    const dx = (e.clientX - dragStartMouse.x) / (image.width * zoom);
+    const dy = (e.clientY - dragStartMouse.y) / (image.height * zoom);
+    updateCropBoxWithDelta(dx, dy);
   };
 
   const handleMouseUp = () => {
@@ -526,24 +613,33 @@ export default function CropCanvas({ imageSrc, settings, onCropComplete, onCance
     onCropComplete(outputDataUrl);
   };
 
-  // Drag handles styled precisely like premium Canva/Adobe design packages
-  const handleStyle = "absolute w-3.5 h-3.5 bg-indigo-500 border border-white rounded-full z-20 cursor-pointer shadow-lg hover:scale-125 transition-transform";
+  // Drag handles styled precisely like premium Canva/Adobe design packages (larger on mobile with touch-target support)
+  const handleStyle = "absolute w-7 h-7 md:w-4.5 md:h-4.5 bg-white border border-gray-400 rounded-full z-20 cursor-pointer shadow-lg hover:scale-125 transition-transform touch-target";
 
   return (
     <div className="relative w-full h-full flex flex-col bg-gray-950 select-none overflow-hidden" ref={containerRef} id="crop_canvas_root">
       {/* Top action header bar */}
       <div className="absolute top-4 right-4 z-10 flex items-center gap-2">
+        <button
+          onClick={() => setIsMoveMode(!isMoveMode)}
+          className={`p-2 rounded-lg border text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer shadow-xl ${
+            isMoveMode ? 'bg-indigo-600 border-indigo-500 text-white' : 'bg-gray-900 border-gray-800 text-gray-400 hover:text-white'
+          }`}
+          title="Toggle Pan/Zoom Image Mode"
+        >
+          <Move className="w-4 h-4" /> <span>{isMoveMode ? 'Moving Mode' : 'Cropping Mode'}</span>
+        </button>
         {onCancel && (
           <button
             onClick={onCancel}
-            className="bg-gray-900 hover:bg-gray-800 border border-gray-800 text-gray-300 font-semibold text-xs px-3.5 py-2 rounded-lg flex items-center gap-1.5 shadow-xl transition active:scale-95"
+            className="bg-gray-900 hover:bg-gray-800 border border-gray-800 text-gray-300 font-semibold text-xs px-3.5 py-2 rounded-lg flex items-center gap-1.5 shadow-xl transition active:scale-95 cursor-pointer"
           >
             <X className="w-4 h-4" /> Cancel
           </button>
         )}
         <button
           onClick={executeCrop}
-          className="bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-xs px-4 py-2 rounded-lg flex items-center gap-1.5 shadow-xl transition active:scale-95"
+          className="bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-xs px-4 py-2 rounded-lg flex items-center gap-1.5 shadow-xl transition active:scale-95 cursor-pointer"
         >
           <Check className="w-4 h-4" /> Apply Crop
         </button>
@@ -552,7 +648,7 @@ export default function CropCanvas({ imageSrc, settings, onCropComplete, onCance
       {/* Workspace Arena */}
       <div
         id="workspace_arena"
-        className="relative w-full h-full overflow-hidden bg-gray-950 cursor-grab active:cursor-grabbing"
+        className={`relative w-full h-full overflow-hidden bg-gray-950 cursor-grab active:cursor-grabbing ${isMoveMode ? 'cursor-grab active:cursor-grabbing' : ''}`}
         onMouseDown={handleBgMouseDown}
         onMouseMove={handleBgMouseMove}
         onMouseUp={handleBgMouseUp}
@@ -575,7 +671,7 @@ export default function CropCanvas({ imageSrc, settings, onCropComplete, onCance
           {/* Interactive Draggable Box Handle Overlay */}
           {image && (
             <div
-              className="absolute border-2 border-indigo-500 group pointer-events-auto"
+              className={`absolute border border-dashed border-white/95 group pointer-events-auto ${isMoveMode ? 'opacity-50' : ''}`}
               style={{
                 left: `${cropBox.x * 100}%`,
                 top: `${cropBox.y * 100}%`,
@@ -586,50 +682,63 @@ export default function CropCanvas({ imageSrc, settings, onCropComplete, onCance
               {/* Inner body draggable mover */}
               <div
                 onMouseDown={(e) => handleMouseDown(e, 'move')}
-                className="absolute inset-0 w-full h-full cursor-move bg-transparent active:bg-white/5 transition-colors"
-                title="Drag to reposition crop selection"
+                onTouchStart={(e) => handleTouchStartHandle(e, 'move')}
+                className={`absolute inset-0 w-full h-full ${isMoveMode ? 'pointer-events-none' : 'cursor-move bg-transparent active:bg-white/5 transition-colors'}`}
+                title={isMoveMode ? "" : "Drag to reposition crop selection"}
               />
 
               {/* Resize handles */}
               {/* Corners */}
               <div
                 onMouseDown={(e) => handleMouseDown(e, 'nw')}
-                className={`${handleStyle} -top-1.5 -left-1.5 cursor-nwse-resize`}
+                onTouchStart={(e) => handleTouchStartHandle(e, 'nw')}
+                style={{ top: 0, left: 0, transform: 'translate(-50%, -50%)' }}
+                className={`${handleStyle} cursor-nwse-resize ${isMoveMode ? 'pointer-events-none opacity-0' : ''}`}
               />
               <div
                 onMouseDown={(e) => handleMouseDown(e, 'ne')}
-                className={`${handleStyle} -top-1.5 -right-1.5 cursor-nesw-resize`}
+                onTouchStart={(e) => handleTouchStartHandle(e, 'ne')}
+                style={{ top: 0, right: 0, transform: 'translate(50%, -50%)' }}
+                className={`${handleStyle} cursor-nesw-resize ${isMoveMode ? 'pointer-events-none opacity-0' : ''}`}
               />
               <div
                 onMouseDown={(e) => handleMouseDown(e, 'se')}
-                className={`${handleStyle} -bottom-1.5 -right-1.5 cursor-nwse-resize`}
+                onTouchStart={(e) => handleTouchStartHandle(e, 'se')}
+                style={{ bottom: 0, right: 0, transform: 'translate(50%, 50%)' }}
+                className={`${handleStyle} cursor-nwse-resize ${isMoveMode ? 'pointer-events-none opacity-0' : ''}`}
               />
               <div
                 onMouseDown={(e) => handleMouseDown(e, 'sw')}
-                className={`${handleStyle} -bottom-1.5 -left-1.5 cursor-nesw-resize`}
+                onTouchStart={(e) => handleTouchStartHandle(e, 'sw')}
+                style={{ bottom: 0, left: 0, transform: 'translate(-50%, 50%)' }}
+                className={`${handleStyle} cursor-nesw-resize ${isMoveMode ? 'pointer-events-none opacity-0' : ''}`}
               />
 
-              {/* Edge/Side drag handles (only visible if aspect ratio is unlocked) */}
-              {!settings.aspectRatio && (
-                <>
-                  <div
-                    onMouseDown={(e) => handleMouseDown(e, 'n')}
-                    className="absolute h-1 left-2 right-2 -top-1 cursor-ns-resize hover:bg-indigo-400 transition"
-                  />
-                  <div
-                    onMouseDown={(e) => handleMouseDown(e, 's')}
-                    className="absolute h-1 left-2 right-2 -bottom-1 cursor-ns-resize hover:bg-indigo-400 transition"
-                  />
-                  <div
-                    onMouseDown={(e) => handleMouseDown(e, 'e')}
-                    className="absolute w-1 top-2 bottom-2 -right-1 cursor-ew-resize hover:bg-indigo-400 transition"
-                  />
-                  <div
-                    onMouseDown={(e) => handleMouseDown(e, 'w')}
-                    className="absolute w-1 top-2 bottom-2 -left-1 cursor-ew-resize hover:bg-indigo-400 transition"
-                  />
-                </>
-              )}
+              {/* Edges */}
+              <div
+                onMouseDown={(e) => handleMouseDown(e, 'n')}
+                onTouchStart={(e) => handleTouchStartHandle(e, 'n')}
+                style={{ top: 0, left: '50%', transform: 'translate(-50%, -50%)' }}
+                className={`${handleStyle} cursor-ns-resize ${isMoveMode ? 'pointer-events-none opacity-0' : ''}`}
+              />
+              <div
+                onMouseDown={(e) => handleMouseDown(e, 's')}
+                onTouchStart={(e) => handleTouchStartHandle(e, 's')}
+                style={{ bottom: 0, left: '50%', transform: 'translate(-50%, 50%)' }}
+                className={`${handleStyle} cursor-ns-resize ${isMoveMode ? 'pointer-events-none opacity-0' : ''}`}
+              />
+              <div
+                onMouseDown={(e) => handleMouseDown(e, 'e')}
+                onTouchStart={(e) => handleTouchStartHandle(e, 'e')}
+                style={{ top: '50%', right: 0, transform: 'translate(50%, -50%)' }}
+                className={`${handleStyle} cursor-ew-resize ${isMoveMode ? 'pointer-events-none opacity-0' : ''}`}
+              />
+              <div
+                onMouseDown={(e) => handleMouseDown(e, 'w')}
+                onTouchStart={(e) => handleTouchStartHandle(e, 'w')}
+                style={{ top: '50%', left: 0, transform: 'translate(-50%, -50%)' }}
+                className={`${handleStyle} cursor-ew-resize ${isMoveMode ? 'pointer-events-none opacity-0' : ''}`}
+              />
             </div>
           )}
         </div>

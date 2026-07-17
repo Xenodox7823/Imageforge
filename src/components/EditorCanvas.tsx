@@ -139,7 +139,9 @@ export default function EditorCanvas({
   useEffect(() => {
     if (!imageSrc) return;
     const img = new Image();
-    img.crossOrigin = 'anonymous';
+    if (!imageSrc.startsWith('blob:') && !imageSrc.startsWith('data:')) {
+      img.crossOrigin = 'anonymous';
+    }
     img.onload = () => {
       setImage(img);
       previewCanvasRef.current = null;

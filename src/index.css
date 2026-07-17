@@ -78,3 +78,13 @@ input[type="range"]::-webkit-slider-runnable-track {
   background: #09090b;
   border-radius: 2px;
 }
+
+/* Touch targets expansion utility */
+.touch-target::after {
+  content: '';
+  position: absolute;
+  top: -12px;
+  left: -12px;
+  right: -12px;
+  bottom: -12px;
+}
